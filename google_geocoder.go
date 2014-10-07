@@ -101,8 +101,16 @@ func (g *GoogleGeocoder) extractLatLngFromResponse(data []byte) (float64, float6
 
 // Reverse geocodes the pointer to a Point struct and returns the first address that matches
 // or returns an error if the underlying request cannot complete.
-func (g *GoogleGeocoder) ReverseGeocode(p *Point) (string, error) {
-	data, err := g.Request(fmt.Sprintf("latlng=%f,%f", p.lat, p.lng))
+func (g *GoogleGeocoder) ReverseGeocode(p *Point, apikey string) (string, error) {
+	var queryurl string
+
+	if apikey != "" {
+		queryurl = fmt.Sprintf("key="+url.QueryEscape(apikey)+"&language=ja&latlng=%f,%f", p.lat, p.lng)
+	} else {
+		queryurl = fmt.Sprintf("language=ja&latlng=%f,%f", p.lat, p.lng)
+	}
+
+	data, err := g.Request(queryurl)
 	if err != nil {
 		return "", err
 	}
