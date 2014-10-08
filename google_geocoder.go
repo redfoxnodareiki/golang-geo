@@ -4,12 +4,17 @@
 package geo
 
 import (
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	//"hash"
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // This struct contains all the funcitonality
@@ -18,7 +23,9 @@ type GoogleGeocoder struct{}
 
 // This struct contains selected fields from Google's Geocoding Service response
 type googleGeocodeResponse struct {
-	Results []struct {
+	Error_message string
+	Status        string
+	Results       []struct {
 		FormattedAddress string `json:"formatted_address"`
 		Geometry         struct {
 			Location struct {
@@ -35,6 +42,7 @@ var googleZeroResultsError = errors.New("ZERO_RESULTS")
 
 // This contains the base URL for the Google Geocoder API.
 var googleGeocodeURL = "https://maps.googleapis.com/maps/api/geocode/json"
+var googleGeocodeURLbase = "/maps/api/geocode/json"
 
 // Note:  In the next major revision (1.0.0), it is planned
 //        That Geocoders should adhere to the `geo.Geocoder`
@@ -49,9 +57,7 @@ func SetGoogleGeocodeURL(newGeocodeURL string) {
 func (g *GoogleGeocoder) Request(params string) ([]byte, error) {
 	client := &http.Client{}
 
-	fullUrl := fmt.Sprintf("%s?sensor=false&%s", googleGeocodeURL, params)
-
-	//fmt.Println(fullUrl)
+	fullUrl := fmt.Sprintf("%s?%s", googleGeocodeURL, params)
 
 	// TODO Potentially refactor out from MapQuestGeocoder as well
 	req, err := http.NewRequest("GET", fullUrl, nil)
@@ -117,7 +123,7 @@ func (g *GoogleGeocoder) ReverseGeocode(p *Point, apikey string) (string, error)
 
 	if apikey != "" {
 		s = fmt.Sprintf("%f,%f", p.lat, p.lng)
-		queryurl = "key=" + url.QueryEscape(apikey) + "&language=ja&latlng=" + s
+		queryurl = "language=ja&latlng=" + s + "&key=" + url.QueryEscape(apikey)
 	} else {
 		queryurl = fmt.Sprintf("language=ja&latlng=%f,%f", p.lat, p.lng)
 	}
@@ -127,27 +133,69 @@ func (g *GoogleGeocoder) ReverseGeocode(p *Point, apikey string) (string, error)
 		return "", err
 	}
 
-	resStr := g.extractAddressFromResponse(data)
+	resStr, err := g.extractAddressFromResponse(data)
+	if err != nil {
+		return "", err
+	}
+
+	return resStr, nil
+}
+
+// Reverse geocodes the pointer to a Point struct and returns the first address that matches
+// or returns an error if the underlying request cannot complete.
+func (g *GoogleGeocoder) ReverseGeocodePremier(p *Point, username string, key string) (string, error) {
+	var queryurl string
+	var s string
+
+	s = fmt.Sprintf("%f,%f", p.lat, p.lng)
+	queryurl = "language=ja&latlng=" + s + "&client=" + username
+
+	// Calculate hash
+	decodedkeyarray, err := base64.StdEncoding.DecodeString(key)
+	if err != nil {
+		return "", err
+	}
+	s = googleGeocodeURLbase + "?" + queryurl
+	hash := hmac.New(sha1.New, decodedkeyarray)
+	hash.Write([]byte(s))
+	signaturebinary := hash.Sum(nil)
+
+	// base64.URLEncoding doesn't work, so I did a cheap workaround for now with
+	// strings.Replace. Works fine, but I'll tidy this up later.
+
+	signaturebase64 := base64.URLEncoding.EncodeToString(signaturebinary)
+	signaturebase64 = strings.Replace(signaturebase64, "+", "-", -1)
+	signaturebase64 = strings.Replace(signaturebase64, "/", "_", -1)
+	signaturebase64 = strings.Replace(signaturebase64, "=", ",", -1)
+	queryurl += "&signature=" + signaturebase64
+
+	data, err := g.Request(queryurl)
+	if err != nil {
+		return "", err
+	}
+
+	resStr, err := g.extractAddressFromResponse(data)
+	if err != nil {
+		return "", err
+	}
 
 	return resStr, nil
 }
 
 // Returns an Address from a Google Geocoder Response body.
-// Michael: Added error handling. I can't edit the function definition to return
-// an error object as it will break the interface. So return "" for errors.
-func (g *GoogleGeocoder) extractAddressFromResponse(data []byte) string {
+func (g *GoogleGeocoder) extractAddressFromResponse(data []byte) (string, error) {
 	//var s string
 	//s = string(data[:])
-	//fmt.Println(s)
+	//fmt.Println("debug: response: " + s)
 	res := &googleGeocodeResponse{}
 	err := json.Unmarshal(data, &res)
 	if err != nil {
-		return ""
+		return "", err
 	}
 
 	if len(res.Results) == 0 {
-		return ""
+		return "", errors.New("Failed: (" + res.Status + ") " + res.Error_message)
 	} else {
-		return res.Results[0].FormattedAddress
+		return res.Results[0].FormattedAddress, nil
 	}
 }
