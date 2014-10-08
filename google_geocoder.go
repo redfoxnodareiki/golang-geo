@@ -1,3 +1,6 @@
+// Modified by Michael Nixon to add lots of error checking
+// Before modification, this library panics on the slightest error.
+// Also added support for API key.
 package geo
 
 import (
@@ -31,7 +34,7 @@ type googleGeocodeResponse struct {
 var googleZeroResultsError = errors.New("ZERO_RESULTS")
 
 // This contains the base URL for the Google Geocoder API.
-var googleGeocodeURL = "http://maps.googleapis.com/maps/api/geocode/json"
+var googleGeocodeURL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 // Note:  In the next major revision (1.0.0), it is planned
 //        That Geocoders should adhere to the `geo.Geocoder`
@@ -48,10 +51,15 @@ func (g *GoogleGeocoder) Request(params string) ([]byte, error) {
 
 	fullUrl := fmt.Sprintf("%s?sensor=false&%s", googleGeocodeURL, params)
 
-	// TODO Potentially refactor out from MapQuestGeocoder as well
-	req, _ := http.NewRequest("GET", fullUrl, nil)
-	resp, requestErr := client.Do(req)
+	//fmt.Println(fullUrl)
 
+	// TODO Potentially refactor out from MapQuestGeocoder as well
+	req, err := http.NewRequest("GET", fullUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, requestErr := client.Do(req)
 	if requestErr != nil {
 		return nil, requestErr
 	}
@@ -87,8 +95,10 @@ func (g *GoogleGeocoder) Geocode(query string) (*Point, error) {
 // Extracts the first lat and lng values from a Google Geocoder Response body.
 func (g *GoogleGeocoder) extractLatLngFromResponse(data []byte) (float64, float64, error) {
 	res := &googleGeocodeResponse{}
-	json.Unmarshal(data, &res)
-
+	err := json.Unmarshal(data, &res)
+	if err != nil {
+		return 0, 0, err
+	}
 	if len(res.Results) == 0 {
 		return 0, 0, googleZeroResultsError
 	}
@@ -103,9 +113,11 @@ func (g *GoogleGeocoder) extractLatLngFromResponse(data []byte) (float64, float6
 // or returns an error if the underlying request cannot complete.
 func (g *GoogleGeocoder) ReverseGeocode(p *Point, apikey string) (string, error) {
 	var queryurl string
+	var s string
 
 	if apikey != "" {
-		queryurl = fmt.Sprintf("key="+url.QueryEscape(apikey)+"&language=ja&latlng=%f,%f", p.lat, p.lng)
+		s = fmt.Sprintf("%f,%f", p.lat, p.lng)
+		queryurl = "key=" + url.QueryEscape(apikey) + "&language=ja&latlng=" + s
 	} else {
 		queryurl = fmt.Sprintf("language=ja&latlng=%f,%f", p.lat, p.lng)
 	}
@@ -121,9 +133,21 @@ func (g *GoogleGeocoder) ReverseGeocode(p *Point, apikey string) (string, error)
 }
 
 // Returns an Address from a Google Geocoder Response body.
+// Michael: Added error handling. I can't edit the function definition to return
+// an error object as it will break the interface. So return "" for errors.
 func (g *GoogleGeocoder) extractAddressFromResponse(data []byte) string {
+	//var s string
+	//s = string(data[:])
+	//fmt.Println(s)
 	res := &googleGeocodeResponse{}
-	json.Unmarshal(data, &res)
+	err := json.Unmarshal(data, &res)
+	if err != nil {
+		return ""
+	}
 
-	return res.Results[0].FormattedAddress
+	if len(res.Results) == 0 {
+		return ""
+	} else {
+		return res.Results[0].FormattedAddress
+	}
 }
