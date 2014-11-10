@@ -182,6 +182,51 @@ func (g *GoogleGeocoder) ReverseGeocodePremier(p *Point, username string, key st
 	return resStr, nil
 }
 
+// Geocodes the passed in query string and returns a pointer to a new Point struct.
+// Returns an error if the underlying request cannot complete.
+func (g *GoogleGeocoder) GeocodePremier(address string, username string, key string) (*Point, error) {
+	if address == "" {
+		return nil, errors.New("address is empty.")
+	}
+
+	var queryurl string
+	var s string
+
+	queryurl = fmt.Sprintf("language=ja&address=%s&client=%s", url.QueryEscape(address), username)
+
+	// Calculate hash
+	decodedkeyarray, err := base64.StdEncoding.DecodeString(key)
+	if err != nil {
+		return nil, err
+	}
+	s = googleGeocodeURLbase + "?" + queryurl
+	hash := hmac.New(sha1.New, decodedkeyarray)
+	hash.Write([]byte(s))
+	signaturebinary := hash.Sum(nil)
+
+	// base64.URLEncoding doesn't work, so I did a cheap workaround for now with
+	// strings.Replace. Works fine, but I'll tidy this up later.
+	signaturebase64 := base64.URLEncoding.EncodeToString(signaturebinary)
+	signaturebase64 = strings.Replace(signaturebase64, "+", "-", -1)
+	signaturebase64 = strings.Replace(signaturebase64, "/", "_", -1)
+	signaturebase64 = strings.Replace(signaturebase64, "=", ",", -1)
+	queryurl += "&signature=" + signaturebase64
+
+	data, err := g.Request(queryurl)
+	if err != nil {
+		return nil, err
+	}
+
+	lat, lng, err := g.extractLatLngFromResponse(data)
+	if err != nil {
+		return nil, err
+	}
+
+	p := &Point{lat: lat, lng: lng}
+
+	return p, nil
+}
+
 // Returns an Address from a Google Geocoder Response body.
 func (g *GoogleGeocoder) extractAddressFromResponse(data []byte) (string, error) {
 	//var s string
